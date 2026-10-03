@@ -60,9 +60,17 @@ function srgb8ToOklab(r8, g8, b8, out, o) {
   out[o + 2] = b;
 }
 
-function oklabToSrgb8(L, a, b) {
+function oklabToLinear(L, a, b) {
   const [l, m, s] = mul3(OKLAB_TO_LMS, L, a, b).map((v) => v ** 3);
-  return mul3(LMS_TO_LINEAR_SRGB, l, m, s).map((v) => linearToSrgb8(v));
+  return mul3(LMS_TO_LINEAR_SRGB, l, m, s);
+}
+
+function oklabToSrgb8(L, a, b) {
+  return oklabToLinear(L, a, b).map((v) => linearToSrgb8(v));
+}
+
+function inSrgbGamut(L, a, b) {
+  return oklabToLinear(L, a, b).every((v) => v >= -1e-4 && v <= 1 + 1e-4);
 }
 
 export function fitWithin(w, h, maxSide) {
@@ -147,6 +155,7 @@ export function quantize(img, colors) {
     clusterColors = keys.map((key) => [key >> 16, (key >> 8) & 255, key & 255]);
   } else {
     ({ centroids, assignment } = kmeans(lab, weights, k));
+    restoreChroma(lab, weights, assignment, centroids, k);
     clusterColors = [];
     for (let c = 0; c < k; c++) clusterColors.push(oklabToSrgb8(centroids[c * 3], centroids[c * 3 + 1], centroids[c * 3 + 2]));
   }
@@ -248,6 +257,37 @@ function kmeans(points, weights, k, maxIter = 40) {
     }
   }
   return { centroids: cent, assignment: assign };
+}
+
+// Averaging a cluster's a/b vectors cancels out its hue spread, so the centroid
+// comes out grayer than the colors it stands for. Give each centroid the mean
+// chroma of its members (same hue and lightness), clipped to the sRGB gamut.
+function restoreChroma(points, weights, assignment, cent, k) {
+  const chromaSum = new Float64Array(k);
+  const wsum = new Float64Array(k);
+  for (let i = 0; i < assignment.length; i++) {
+    const c = assignment[i];
+    chromaSum[c] += Math.hypot(points[i * 3 + 1], points[i * 3 + 2]) * weights[i];
+    wsum[c] += weights[i];
+  }
+  for (let c = 0; c < k; c++) {
+    const o = c * 3;
+    const current = Math.hypot(cent[o + 1], cent[o + 2]);
+    if (wsum[c] === 0 || current < 1e-6) continue; // gray centroid: no hue to push along
+    let scale = chromaSum[c] / wsum[c] / current;
+    if (scale <= 1) continue;
+    if (!inSrgbGamut(cent[o], cent[o + 1] * scale, cent[o + 2] * scale)) {
+      let lo = 1, hi = scale;
+      for (let j = 0; j < 12; j++) {
+        const mid = (lo + hi) / 2;
+        if (inSrgbGamut(cent[o], cent[o + 1] * mid, cent[o + 2] * mid)) lo = mid;
+        else hi = mid;
+      }
+      scale = lo;
+    }
+    cent[o + 1] *= scale;
+    cent[o + 2] *= scale;
+  }
 }
 
 function sqDist(a, i, b, j) {

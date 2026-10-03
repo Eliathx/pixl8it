@@ -3,6 +3,8 @@ Chrome extension that pixelates images. Right-click an image, pick **Pixelate**,
 
 Useful for references, palette studies and placeholder art. Never a replacement for hand-made pixel art. ♡
 
+![pixl8it demo](demo.gif)
+
 ## Install
 1. Open `chrome://extensions` and turn on **Developer mode**.
 2. Click **Load unpacked** and pick this folder.
