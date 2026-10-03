@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>pixl8it</title>
+  <link rel="stylesheet" href="result.css">
+  <script type="module" src="result.js"></script>
+</head>
+<body>
+  <header class="bar">
+    <label class="control">Size
+      <input id="size" type="range" min="16" max="256" step="1">
+      <output id="sizeOut"></output>px
+    </label>
+    <label class="control">Colors
+      <input id="colors" type="range" min="2" max="64" step="1">
+      <output id="colorsOut"></output>
+    </label>
+    <span class="spacer"></span>
+    <div id="palette" class="palette"></div>
+  </header>
+
+  <main id="stage">
+    <canvas id="canvas" hidden></canvas>
+    <p id="status">Loading...</p>
+  </main>
+</body>
+</html>

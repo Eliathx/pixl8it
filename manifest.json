@@ -1,0 +1,12 @@
+{
+  "manifest_version": 3,
+  "name": "pixl8it",
+  "version": "0.1.0",
+  "description": "Right-click any image to Pixelate. Downscales it and reduces it to a small indexed color palette.",
+  "minimum_chrome_version": "112",
+  "permissions": ["contextMenus", "storage", "scripting"],
+  "host_permissions": ["<all_urls>"],
+  "background": {
+    "service_worker": "background.js"
+  }
+}
