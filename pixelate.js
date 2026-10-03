@@ -154,7 +154,11 @@ export function quantize(img, colors) {
     assignment = Int32Array.from({ length: m }, (_, u) => u);
     clusterColors = keys.map((key) => [key >> 16, (key >> 8) & 255, key & 255]);
   } else {
-    ({ centroids, assignment } = kmeans(lab, weights, k));
+    // photos have about one color per pixel, so cluster small RGB cells instead
+    const cells = binColors(lab, keys, weights);
+    centroids = kmeans(cells.points, cells.weights, k);
+    assignment = new Int32Array(m);
+    for (let u = 0; u < m; u++) assignment[u] = nearest(lab, u * 3, centroids, k);
     restoreChroma(lab, weights, assignment, centroids, k);
     clusterColors = [];
     for (let c = 0; c < k; c++) clusterColors.push(oklabToSrgb8(centroids[c * 3], centroids[c * 3 + 1], centroids[c * 3 + 2]));
@@ -178,13 +182,57 @@ export function quantize(img, colors) {
 
 export function toRgba({ width, height, indices, palette, transparentIndex }) {
   const out = new Uint8ClampedArray(width * height * 4);
-  for (let p = 0; p < indices.length; p++) {
+  for (let p = 0, o = 0; p < indices.length; p++, o += 4) {
     const idx = indices[p];
     if (idx === transparentIndex) continue;
-    const [r, g, b] = palette[idx];
-    out.set([r, g, b, 255], p * 4);
+    const rgb = palette[idx];
+    out[o] = rgb[0];
+    out[o + 1] = rgb[1];
+    out[o + 2] = rgb[2];
+    out[o + 3] = 255;
   }
   return out;
+}
+
+const CELL_BITS = 5;
+function binColors(lab, keys, weights) {
+  const shift = 8 - CELL_BITS;
+  const mask = (1 << CELL_BITS) - 1;
+  const cellOf = new Int32Array(1 << (CELL_BITS * 3)).fill(-1);
+  const sums = new Float64Array(Math.min(keys.length, cellOf.length) * 3);
+  const cellWeights = [];
+  for (let u = 0; u < keys.length; u++) {
+    const key = keys[u];
+    const id =
+      (((key >> (16 + shift)) & mask) << (CELL_BITS * 2)) | (((key >> (8 + shift)) & mask) << CELL_BITS) | ((key >> shift) & mask);
+    let c = cellOf[id];
+    if (c < 0) {
+      c = cellOf[id] = cellWeights.length;
+      cellWeights.push(0);
+    }
+    const w = weights[u];
+    sums[c * 3] += lab[u * 3] * w;
+    sums[c * 3 + 1] += lab[u * 3 + 1] * w;
+    sums[c * 3 + 2] += lab[u * 3 + 2] * w;
+    cellWeights[c] += w;
+  }
+  const points = new Float32Array(cellWeights.length * 3);
+  for (let c = 0; c < cellWeights.length; c++) {
+    for (let j = 0; j < 3; j++) points[c * 3 + j] = sums[c * 3 + j] / cellWeights[c];
+  }
+  return { points, weights: cellWeights };
+}
+
+function nearest(points, i, cent, k) {
+  let best = 0, bestD = Infinity;
+  for (let c = 0; c < k; c++) {
+    const d = sqDist(points, i, cent, c * 3);
+    if (d < bestD) {
+      bestD = d;
+      best = c;
+    }
+  }
+  return best;
 }
 
 function kmeans(points, weights, k, maxIter = 40) {
@@ -216,8 +264,7 @@ function kmeans(points, weights, k, maxIter = 40) {
   const assign = new Int32Array(m);
   const sums = new Float64Array(k * 3);
   const wsum = new Float64Array(k);
-  for (let iter = 0; ; iter++) {
-    let changed = iter === 0;
+  for (let iter = 0; iter < maxIter; iter++) {
     for (let i = 0; i < m; i++) {
       let best = 0, bestD = Infinity;
       for (let c = 0; c < k; c++) {
@@ -227,13 +274,9 @@ function kmeans(points, weights, k, maxIter = 40) {
           best = c;
         }
       }
+      assign[i] = best;
       dist[i] = bestD;
-      if (assign[i] !== best) {
-        assign[i] = best;
-        changed = true;
-      }
     }
-    if (!changed || iter === maxIter - 1) break;
 
     sums.fill(0);
     wsum.fill(0);
@@ -244,20 +287,29 @@ function kmeans(points, weights, k, maxIter = 40) {
       sums[c * 3 + 2] += points[i * 3 + 2] * w;
       wsum[c] += w;
     }
+
+    let maxShift = 0;
     for (let c = 0; c < k; c++) {
+      const o = c * 3;
+      let next;
       if (wsum[c] > 0) {
-        for (let j = 0; j < 3; j++) cent[c * 3 + j] = sums[c * 3 + j] / wsum[c];
+        next = [sums[o] / wsum[c], sums[o + 1] / wsum[c], sums[o + 2] / wsum[c]];
       } else {
         // empty cluster: reseed at the worst-fit color
         let worst = 0;
         for (let i = 1; i < m; i++) if (weights[i] * dist[i] > weights[worst] * dist[worst]) worst = i;
-        cent.set(points.subarray(worst * 3, worst * 3 + 3), c * 3);
+        next = points.subarray(worst * 3, worst * 3 + 3);
         dist[worst] = 0;
       }
+      maxShift = Math.max(maxShift, sqDist(cent, o, next, 0));
+      cent.set(next, o);
     }
+    if (maxShift < CONVERGED * CONVERGED) break;
   }
-  return { centroids: cent, assignment: assign };
+  return cent;
 }
+
+const CONVERGED = 1e-3;
 
 // Averaging a cluster's a/b vectors cancels out its hue spread, so the centroid
 // comes out grayer than the colors it stands for. Give each centroid the mean

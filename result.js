@@ -1,7 +1,7 @@
 import { downscale, fitWithin, quantize, toRgba } from "./pixelate.js";
 
 const DEFAULTS = { size: 100, colors: 16 };
-const MAX_SOURCE_SIDE = 2048; // huge images are pre-shrunk by the browser
+const MAX_SOURCE_SIDE = 1024; // huge images are pre-shrunk by the browser
 
 const $ = (id) => document.getElementById(id);
 const ui = {
